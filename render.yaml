@@ -1,0 +1,7 @@
+services:
+  - type: web
+    name: warehouse-fulfillment
+    runtime: docker
+    plan: free
+    healthCheckPath: /health
+    autoDeploy: true
