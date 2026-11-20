@@ -39,6 +39,8 @@ def main(argv: list[str] | None = None) -> None:
               "purchase_orders", "robot_utilization", "forecast_wape", "naive_wape"):
         print(f"  {k:<20} {m[k]}")
 
+    if args.decisions <= 0:
+        return
     print(f"\nLast {args.decisions} agent decisions")
     for d in sim.decisions.recent(args.decisions):
         who = d.order_id or d.details.get("po_id", "")
