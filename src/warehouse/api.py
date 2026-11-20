@@ -1,21 +1,59 @@
-"""HTTP API over a live simulation. Run: `uv run uvicorn warehouse.api:app --reload`."""
+"""HTTP API. Run: `uv run uvicorn warehouse.api:app --reload`.
+
+A thin wrapper over `warehouse.service.Service`: all logic lives there so the same
+code also runs in the browser (static build). Each visitor gets their own simulation,
+tracked by a session cookie; idle sessions are evicted.
+"""
 
 from __future__ import annotations
 
-from dataclasses import asdict
+import secrets
+import time
+from collections import OrderedDict
 from pathlib import Path
 from typing import Literal
 
-from fastapi import FastAPI, HTTPException
-from fastapi.responses import FileResponse, RedirectResponse
+from fastapi import Depends, FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse, RedirectResponse
 from pydantic import BaseModel, Field
 
-from .forecasting import backtest
-from .models import Order, OrderStatus
-from .simulation import SimConfig, Simulation
+from .models import OrderStatus
+from .service import MAX_STEP_TICKS, HttpError, Service
+from .simulation import Simulation
 
 STATIC = Path(__file__).parent / "static"
-MAX_DAYS = 120  # keeps memory bounded when hosted and left running
+COOKIE = "wh_session"
+
+
+class SessionStore:
+    """One Service per browser session, least-recently-used eviction."""
+
+    def __init__(self, max_sessions: int = 200, idle_seconds: int = 1800, shared: Service | None = None) -> None:
+        self.max_sessions = max_sessions
+        self.idle_seconds = idle_seconds
+        self.shared = shared  # tests / single-user mode: everyone gets this one
+        self._sessions: OrderedDict[str, tuple[Service, float]] = OrderedDict()
+
+    def get(self, sid: str | None) -> tuple[Service, str, bool]:
+        if self.shared is not None:
+            return self.shared, sid or "shared", False
+        now = time.monotonic()
+        for old, (_, seen) in list(self._sessions.items()):  # evict idle
+            if now - seen > self.idle_seconds:
+                del self._sessions[old]
+        if sid and sid in self._sessions:
+            service, _ = self._sessions.pop(sid)
+            self._sessions[sid] = (service, now)
+            return service, sid, False
+        while len(self._sessions) >= self.max_sessions:
+            self._sessions.popitem(last=False)
+        sid = secrets.token_urlsafe(16)
+        service = Service()
+        self._sessions[sid] = (service, now)
+        return service, sid, True
+
+    def __len__(self) -> int:
+        return len(self._sessions)
 
 
 class LineIn(BaseModel):
@@ -29,219 +67,135 @@ class OrderIn(BaseModel):
 
 
 class StepIn(BaseModel):
-    ticks: int = Field(default=60, ge=1, le=48_000)
+    ticks: int = Field(default=60, ge=1, le=MAX_STEP_TICKS)
+
+
+class ScenarioIn(BaseModel):
+    seed: int | None = None
+    outage: str | bool | None = None
+    outage_start: int | None = None
+    outage_days: int | None = None
+    orders_per_day: float | None = None
+    robots: int | None = None
 
 
 class ResetIn(BaseModel):
-    seed: int = 7
-    outage: bool = True
+    scenario: ScenarioIn | None = None
 
 
-def order_out(o: Order) -> dict:
-    return {
-        "order_id": o.order_id,
-        "status": o.status.value,
-        "destination": list(o.destination),
-        "lines": [asdict(l) for l in o.lines],
-        "allocations": [asdict(a) for a in o.allocations],
-        "unallocated": o.unallocated(),
-        "warehouses": o.warehouses(),
-        "created_tick": o.created_tick,
-        "shipped_tick": o.shipped_tick,
-        "reroute_count": o.reroute_count,
-    }
+def create_app(sim: Simulation | None = None, *, max_sessions: int = 200) -> FastAPI:
+    """`sim` pins a single shared simulation (handy for tests); otherwise one per session."""
+    app = FastAPI(title="Warehouse Fulfillment", version="0.2.0")
+    store = SessionStore(max_sessions=max_sessions, shared=Service(sim=sim) if sim else None)
+    app.state.sessions = store
 
+    @app.middleware("http")
+    async def session_middleware(request: Request, call_next):
+        service, sid, new = store.get(request.cookies.get(COOKIE))
+        request.state.service = service
+        response = await call_next(request)
+        if new:
+            response.set_cookie(COOKIE, sid, max_age=7 * 24 * 3600, httponly=True, samesite="lax")
+        return response
 
-def create_app(sim: Simulation | None = None) -> FastAPI:
-    app = FastAPI(title="Warehouse Fulfillment", version="0.1.0")
-    state = {"sim": sim or Simulation()}
+    @app.exception_handler(HttpError)
+    async def http_error(_: Request, exc: HttpError):
+        return JSONResponse({"detail": exc.detail}, status_code=exc.status)
 
-    def S() -> Simulation:
-        return state["sim"]
+    def svc(request: Request) -> Service:
+        return request.state.service
 
-    def wh_or_404(wid: str):
-        if wid not in S().warehouses:
-            raise HTTPException(404, f"unknown warehouse {wid}")
-        return S().warehouses[wid]
-
+    # Handlers are async so a session's requests run one at a time on the event loop.
     @app.get("/health")
-    def health():
-        return {"ok": True, "tick": S().tick, "day": S().day}
+    async def health(s: Service = Depends(svc)):
+        return s.health()
 
     @app.get("/catalog")
-    def catalog():
-        return [asdict(s) for s in S().catalog.values()]
+    async def catalog(s: Service = Depends(svc)):
+        return s.catalog()
 
     @app.get("/warehouses")
-    def warehouses():
-        return [w.summary() for w in S().warehouses.values()]
+    async def warehouses(s: Service = Depends(svc)):
+        return s.warehouses()
 
     @app.get("/warehouses/{wid}/inventory")
-    def inventory(wid: str):
-        return wh_or_404(wid).inventory.snapshot()
+    async def inventory(wid: str, s: Service = Depends(svc)):
+        return s.inventory(wid)
 
     @app.post("/warehouses/{wid}/outage")
-    def outage(wid: str):
-        wh_or_404(wid).set_online(False, "manual via API")
-        S().fulfillment.step()
-        return wh_or_404(wid).summary()
+    async def outage(wid: str, s: Service = Depends(svc)):
+        return s.outage(wid)
 
     @app.post("/warehouses/{wid}/restore")
-    def restore(wid: str):
-        wh_or_404(wid).set_online(True, "manual via API")
-        return wh_or_404(wid).summary()
+    async def restore(wid: str, s: Service = Depends(svc)):
+        return s.restore_site(wid)
 
     @app.post("/warehouses/{wid}/scan")
-    def scan(wid: str):
-        return {"adjustments": wh_or_404(wid).scan_shelves()}
+    async def scan(wid: str, s: Service = Depends(svc)):
+        return s.scan(wid)
 
     @app.post("/orders", status_code=201)
-    def create_order(body: OrderIn):
-        try:
-            o = S().submit_order([(l.sku_id, l.qty) for l in body.lines], body.destination)
-        except KeyError as e:
-            raise HTTPException(422, f"unknown sku {e}")
-        return order_out(o)
+    async def create_order(body: OrderIn, s: Service = Depends(svc)):
+        return s.create_order([(l.sku_id, l.qty) for l in body.lines], body.destination)
 
     @app.get("/orders")
-    def list_orders(status: OrderStatus | None = None, limit: int = 50):
-        orders = [o for o in S().orders.values() if status is None or o.status == status]
-        return [order_out(o) for o in reversed(orders[-limit:])]
+    async def list_orders(status: OrderStatus | None = None, limit: int = 50, s: Service = Depends(svc)):
+        return s.list_orders(status.value if status else None, limit)
 
     @app.get("/orders/{oid}")
-    def get_order(oid: str):
-        if oid not in S().orders:
-            raise HTTPException(404, f"unknown order {oid}")
-        return order_out(S().orders[oid])
+    async def get_order(oid: str, s: Service = Depends(svc)):
+        return s.get_order(oid)
 
     @app.get("/forecast/{sku_id}")
-    def forecast(sku_id: str, horizon: int = 14, history: int = 14):
-        if sku_id not in S().catalog:
-            raise HTTPException(404, f"unknown sku {sku_id}")
-        fs = S().forecasts
-        hist = fs.histories[sku_id]
-        return {
-            "sku_id": sku_id,
-            "history_tail": hist[-history:],
-            "forecast": [round(float(x), 2) for x in fs.forecast(sku_id, horizon)],
-            "sigma": round(fs.sigma(sku_id), 2),
-            "backtest_7d": backtest(hist, 7),
-        }
+    async def forecast(sku_id: str, horizon: int = 14, history: int = 14, s: Service = Depends(svc)):
+        return s.forecast(sku_id, horizon, history)
 
     @app.get("/decisions")
-    def decisions(limit: int = 50, agent: Literal["fulfillment", "replenishment"] | None = None):
-        return [asdict(d) for d in S().decisions.recent(5000) if agent is None or d.agent == agent][-limit:]
+    async def decisions(limit: int = 50, agent: Literal["fulfillment", "replenishment"] | None = None, s: Service = Depends(svc)):
+        return s.decisions(limit, agent)
 
     @app.get("/events")
-    def events(limit: int = 100, kind: str | None = None):
-        return [asdict(e) for e in S().bus.recent(limit, kind)]
+    async def events(limit: int = 100, kind: str | None = None, s: Service = Depends(svc)):
+        return s.events(limit, kind)
 
     @app.get("/metrics")
-    def metrics():
-        return S().metrics()
+    async def metrics(s: Service = Depends(svc)):
+        return s.metrics()
 
     @app.get("/metrics/daily")
-    def metrics_daily():
-        return S().daily
+    async def metrics_daily(s: Service = Depends(svc)):
+        return s.metrics_daily()
 
     @app.get("/inventory/overview")
-    def inventory_overview():
-        """Per-SKU stock across the network with forecast cover, for the inventory page."""
-        sim = S()
-        rows = []
-        for sku in sim.catalog.values():
-            fc7 = float(sim.forecasts.forecast(sku.sku_id, 7).sum())
-            per_wh = {}
-            for w in sim.warehouses.values():
-                inv = w.inventory
-                per_wh[w.warehouse_id] = {
-                    "on_hand": inv.on_hand_total(sku.sku_id),
-                    "available": inv.available(sku.sku_id),
-                    "on_order": sim.replenishment.on_order[(w.warehouse_id, sku.sku_id)],
-                    "online": w.online,
-                }
-            available = sum(v["available"] for v in per_wh.values() if v["online"])
-            daily = fc7 / 7
-            rows.append({
-                "sku_id": sku.sku_id, "name": sku.name, "lead_time_days": sku.lead_time_days,
-                "warehouses": per_wh, "available": available,
-                "on_order": sum(v["on_order"] for v in per_wh.values()),
-                "forecast_7d": round(fc7, 1),
-                "days_of_cover": round(available / daily, 1) if daily else None,
-            })
-        return rows
+    async def inventory_overview(s: Service = Depends(svc)):
+        return s.inventory_overview()
 
     @app.get("/purchase-orders")
-    def purchase_orders():
-        return [asdict(p) for p in sorted(S().replenishment.inbound, key=lambda p: p.arrival_day)]
-
-    @app.get("/", include_in_schema=False)
-    def root():
-        return RedirectResponse("/dashboard")
-
-    @app.get("/dashboard", include_in_schema=False)
-    def dashboard():
-        return FileResponse(STATIC / "dashboard.html")
-
-    @app.get("/dashboard/state")
-    def dashboard_state():
-        """Everything the live dashboard draws, in one call."""
-        sim = S()
-        whs = []
-        for w in sim.warehouses.values():
-            inv = w.inventory
-            whs.append({
-                "warehouse_id": w.warehouse_id,
-                "online": w.online,
-                "backlog": w.backlog,
-                "queued_jobs": len(w.fleet.queue),
-                "width": w.layout.width,
-                "height": w.layout.height,
-                "dock": list(w.layout.dock),
-                "bins": [
-                    {"loc": loc, "x": x, "y": y, "sku": inv.bin_sku.get(loc),
-                     "on_hand": inv.on_hand[loc] if loc in inv.bin_sku else 0,
-                     "reserved": inv.reserved[loc] if loc in inv.bin_sku else 0,
-                     "physical": w.physical[loc] if loc in inv.bin_sku else 0}
-                    for loc, (x, y) in w.layout.locations.items()
-                ],
-                "robots": [
-                    {"id": r.robot_id, "pos": list(r.pos), "state": r.state.value, "battery": round(r.battery),
-                     "order": r.job.order_id if r.job else None,
-                     "route": [list(c) for leg in r.legs for c in leg.path],
-                     "stops": [list(w.layout.pick_faces[leg.task.location_id]) for leg in r.legs if leg.task]}
-                    for r in w.fleet.robots
-                ],
-            })
-        noisy = {"allocation.created", "job.queued", "agent.decision", "order.created", "job.done",
-                 "vision.low_confidence", "day.closed"}
-        return {
-            "tick": sim.tick,
-            "day": sim.day,
-            "ticks_per_day": sim.cfg.ticks_per_day,
-            "metrics": sim.metrics(),
-            "daily": sim.daily,
-            "warehouses": whs,
-            "skus": [{"sku_id": s.sku_id, "name": s.name} for s in sim.catalog.values()],
-            "decisions": [asdict(d) for d in sim.decisions.recent(40)][::-1],
-            "events": [asdict(e) for e in sim.bus.log if e.kind not in noisy][-40:][::-1],
-        }
+    async def purchase_orders(s: Service = Depends(svc)):
+        return s.purchase_orders()
 
     @app.post("/simulation/step")
-    def step(body: StepIn):
-        sim = S()
-        if sim.day >= MAX_DAYS:
-            raise HTTPException(409, f"The simulation reached day {MAX_DAYS}. Reset to start over.")
-        sim.run_ticks(min(body.ticks, (MAX_DAYS * sim.cfg.ticks_per_day) - sim.tick))
-        return S().metrics()
+    async def step(body: StepIn, s: Service = Depends(svc)):
+        return s.step(body.ticks)
 
     @app.post("/simulation/reset")
-    def reset(body: ResetIn):
-        cfg = SimConfig(seed=body.seed)
-        if not body.outage:
-            cfg.outage = None
-        state["sim"] = Simulation(cfg)
-        return S().metrics()
+    async def reset(body: ResetIn, s: Service = Depends(svc)):
+        # exclude_unset (not exclude_none): an explicit `"outage": null` means "no outage"
+        scenario = body.scenario.model_dump(exclude_unset=True) if body.scenario else None
+        return s.reset(scenario)
+
+    @app.get("/dashboard/state")
+    async def dashboard_state(s: Service = Depends(svc)):
+        return s.dashboard_state()
+
+    @app.get("/", include_in_schema=False)
+    async def root(request: Request):
+        query = f"?{request.url.query}" if request.url.query else ""
+        return RedirectResponse(f"/dashboard{query}")
+
+    @app.get("/dashboard", include_in_schema=False)
+    async def dashboard():
+        return FileResponse(STATIC / "dashboard.html")
 
     return app
 

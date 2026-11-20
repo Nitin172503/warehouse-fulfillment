@@ -4,7 +4,7 @@ A three-warehouse fulfillment network where **robots pick items**, **shelf camer
 check stock**, **ML forecasts demand**, and **agents route and reroute orders**.
 Everything runs in a deterministic discrete-time simulation with an HTTP API on top.
 
-**Live demo: https://nitin172503.github.io/warehouse-fulfillment/** (runs entirely in your browser, nothing to install)
+**Live demo: https://nitin172503.github.io/warehouse-fulfillment/** (the real Python simulation runs in your browser, nothing to install)
 
 [![Deploy to Render](https://render.com/images/deploy-to-render-button.svg)](https://render.com/deploy?repo=https://github.com/Nitin172503/warehouse-fulfillment)
 
@@ -13,7 +13,7 @@ Everything runs in a deterministic discrete-time simulation with an HTTP API on 
 ```bash
 uv sync                                  # Python 3.11+, numpy, fastapi
 uv run warehouse-sim --days 14           # run the network, print daily metrics + agent decisions
-uv run pytest                            # 18 tests
+uv run pytest                            # 29 tests
 uv run uvicorn warehouse.api:app --reload  # web app at http://127.0.0.1:8000
 ```
 
@@ -29,9 +29,16 @@ Open **http://127.0.0.1:8000** after starting the server (`/docs` is the raw API
 | **Forecasting** | Per-product demand history and 14-day forecast with a 95% range, model error vs a naive guess, inbound purchase orders. |
 | **Activity** | Every agent decision with its reason, and every exception on the floor. |
 
-On the GitHub Pages demo each visitor gets their own simulation running in their browser.
-On a server deployment (Render, Docker) everyone shares one simulation: if two people press Play it runs twice as fast,
-and Reset restarts it for everyone. The clock pauses when the tab is in the background and stops at day 120.
+Every visitor gets their own simulation: in the browser on GitHub Pages, or one per session
+(cookie) on a server deployment. The clock pauses when the tab is in the background and stops at day 120.
+
+**Scenarios & share links.** The sidebar's Scenario button sets the random seed, which site fails and
+when, orders per day and robots per site. **Share** copies a link such as
+`?seed=42&outage=south&at=4&for=2&orders=150&robots=3`; anyone who opens it gets that exact run
+(same seed + settings = same outcome).
+
+**Saved progress.** On GitHub Pages the simulation is saved in the browser (IndexedDB) every few
+seconds and when the tab closes, so a refresh resumes where you were.
 
 The sidebar runs the simulation clock: Play/Pause (or press Space), speed 1×–60×, and reset.
 
@@ -63,7 +70,8 @@ and every agent decision is recorded with a plain-language reason.
 | `simulation.py` | Order generation, shrinkage, scheduled outage, daily cycle, metrics |
 | `api.py` / `cli.py` | FastAPI service / terminal runner |
 | `static/dashboard.html` | The web app (single file, no build step) |
-| `static/engine.js` | JavaScript port of the simulation for the serverless GitHub Pages build |
+| `service.py` | Every app operation, framework-free; used by FastAPI and by the browser build |
+| `static/engine-worker.js` / `engine-client.js` | Run the Python package in the browser via Pyodide |
 
 ## Key behaviours
 
@@ -109,13 +117,21 @@ warehouse by its recent share of allocations.
 
 ## Deploying
 
-**GitHub Pages (free, no server).** Every push to `main` runs the tests, builds a static copy of the
-web app (`scripts/build_site.sh`) and publishes it via `.github/workflows/pages.yml`. In that build,
-`src/warehouse/static/engine.js` — a JavaScript port of the simulation — runs in the visitor's browser
-and answers the same routes as the FastAPI app, so `dashboard.html` is identical in both modes.
-Keep `engine.js` in step with the Python modules when you change simulation behaviour;
-`node tests/engine_check.cjs` smoke-tests it.
+One Python codebase runs everywhere. All app operations live in `warehouse/service.py`, which has
+no web-framework imports:
+
+```
+           ┌─ FastAPI (api.py) ─ one Service per session ─ Render / Docker
+service.py ┤
+           └─ Pyodide in a Web Worker (engine-worker.js) ─ GitHub Pages, no server
+```
+
+**GitHub Pages (free, no server).** Every push to `main` runs the tests, then `scripts/build_site.sh`
+copies the Python package (minus `api.py`/`cli.py`) next to the web app, and
+`.github/workflows/pages.yml` publishes it. In the browser, Pyodide 0.27 (Python 3.12 + NumPy)
+loads from jsDelivr (~10 MB, cached after the first visit) and runs the package. Saved
+progress is tied to a hash of the Python sources, so it resets automatically when the code changes.
 
 **Render / Docker (Python server).** The repo also includes a `Dockerfile` and a Render blueprint
 (`render.yaml`). Click **Deploy to Render** above. On the free plan the service sleeps after ~15 idle
-minutes and takes 30–60 s to wake.
+minutes and takes 30–60 s to wake. Sessions live in memory (max 200, evicted after 30 idle minutes).

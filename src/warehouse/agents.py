@@ -15,6 +15,7 @@ from __future__ import annotations
 import math
 from collections import defaultdict, deque
 from dataclasses import asdict, dataclass, field
+from functools import partial
 
 from .events import Event, EventBus
 from .forecasting import ForecastService
@@ -259,7 +260,7 @@ class ReplenishmentAgent:
         self.cover_days = cover_days
         self.on_order: dict[tuple[str, str], int] = defaultdict(int)
         self.inbound: list[PurchaseOrder] = []
-        self._alloc_hist: dict[tuple[str, str], deque[int]] = defaultdict(lambda: deque(maxlen=share_window_days))
+        self._alloc_hist: dict[tuple[str, str], deque[int]] = defaultdict(partial(deque, maxlen=share_window_days))
         self._po_seq = 0
 
     def record_day(self, allocated: dict[tuple[str, str], int]) -> None:

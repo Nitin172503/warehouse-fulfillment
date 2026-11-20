@@ -43,6 +43,7 @@
   --shadow: none; --shadow-lg: 0 12px 48px rgb(0 0 0 / .5);
 }
 * { box-sizing: border-box; }
+[hidden] { display: none !important; }
 html, body { height: 100%; }
 body { margin: 0; background: var(--bg); color: var(--text-primary);
   font: 14px/1.5 ui-sans-serif, -apple-system, BlinkMacSystemFont, "Segoe UI", Inter, system-ui, sans-serif;
@@ -251,6 +252,25 @@ tbody tr.click { cursor: pointer; } tbody tr.click:hover { background: var(--sur
 #tip .dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; margin-right: 6px; }
 .conn { display: none; background: var(--critical-soft); border-radius: 10px; padding: 10px 14px; margin-bottom: 16px; }
 .conn.show { display: block; }
+.scen-line { font-size: 11px; color: var(--text-muted); margin-top: 2px; line-height: 1.35; }
+.saved-note { display: flex; align-items: center; gap: 5px; margin-top: 10px; font-size: 11px; color: var(--text-muted); }
+.saved-note svg { width: 12px; height: 12px; color: var(--good); }
+.saved-note[hidden] { display: none; }
+.hint-s { font-size: 12px; color: var(--text-muted); }
+.field.two { grid-template-columns: 1fr 1fr; gap: 12px; } .field.two > div { display: grid; gap: 6px; }
+.field.two label { font-weight: 600; font-size: 13px; }
+.field.two[hidden] { display: none; }
+input[type="range"] { width: 100%; accent-color: var(--accent); }
+#sOutage { width: 100%; } #sOutage button { flex: 1; }
+.boot { position: fixed; inset: 0; z-index: 50; display: grid; place-items: center; background: var(--bg); padding: 16px; }
+.boot[hidden] { display: none; }
+.boot-card { max-width: 380px; text-align: center; display: grid; gap: 8px; justify-items: center; }
+.boot-card b { font-size: 17px; } .boot-card p { margin: 0; color: var(--text-secondary); }
+.boot-card p.muted { font-size: 12px; color: var(--text-muted); }
+.spinner { width: 36px; height: 36px; border-radius: 50%; border: 3px solid var(--surface-3); border-top-color: var(--accent); animation: spin .9s linear infinite; margin-bottom: 6px; }
+.spinner.err { animation: none; border-color: var(--critical); }
+@keyframes spin { to { transform: rotate(360deg); } }
+@media (prefers-reduced-motion: reduce) { .spinner { animation-duration: 3s; } }
 
 @media (max-width: 1280px) { .floors { grid-template-columns: 1fr 1fr; } }
 @media (max-width: 1100px) { .grid2, .grid-fc { grid-template-columns: 1fr; } .stat-row { grid-template-columns: 1fr 1fr; } }
@@ -260,7 +280,7 @@ tbody tr.click { cursor: pointer; } tbody tr.click:hover { background: var(--sur
   .brand { padding: 0 8px 0 0; } .brand small { display: none; }
   .nav { display: flex; gap: 2px; overflow-x: auto; order: 3; width: 100%; } .nav a span.t { white-space: nowrap; }
   .simbox { margin: 0 0 0 auto; padding: 6px 8px; display: flex; gap: 8px; align-items: center; border: 0; background: transparent; }
-  .simbox .lbl, .simbox .sub, .dayprog, .simbox .seg { display: none; } .simbox .time { font-size: 14px; margin: 0; }
+  .simbox .lbl, .simbox .sub, .dayprog, .simbox .seg, .simbox .scen-line, .simbox .saved-note { display: none !important; } .simbox .time { font-size: 14px; margin: 0; }
   .main { padding: 18px 16px 40px; } .floors { grid-template-columns: 1fr; } .kpis { grid-template-columns: 1fr 1fr; }
   .search .input { width: 100%; } .search { flex: 1; } .dest { grid-template-columns: 1fr 1fr; }
 }
@@ -284,14 +304,17 @@ tbody tr.click { cursor: pointer; } tbody tr.click:hover { background: var(--sur
       <div class="lbl">Simulation clock</div>
       <div class="time num" id="clockTime">--:--</div>
       <div class="sub num" id="clockDay">Day 0</div>
+      <div class="scen-line" id="scenLine"></div>
       <div class="dayprog"><i id="dayBar" style="width:0"></i></div>
       <div class="playrow">
         <button class="btn primary block" id="play" aria-label="Play simulation"><svg viewBox="0 0 24 24" fill="currentColor"><path d="M7 4l13 8-13 8z"/></svg>Play</button>
-        <button class="btn" id="reset" title="Restart from day 0" aria-label="Reset simulation"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 109-9 9.7 9.7 0 00-6.7 2.8L3 8"/><path d="M3 3v5h5"/></svg></button>
+        <button class="btn" id="scenBtn" title="Change scenario" aria-label="Change scenario"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M4 21v-7M4 10V3M12 21v-9M12 8V3M20 21v-5M20 12V3M1 14h6M9 8h6M17 16h6"/></svg></button>
+        <button class="btn" id="reset" title="Restart this scenario from day 0" aria-label="Restart simulation"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M3 12a9 9 0 109-9 9.7 9.7 0 00-6.7 2.8L3 8"/><path d="M3 3v5h5"/></svg></button>
       </div>
       <div class="seg" id="speed" role="group" aria-label="Simulation speed">
         <button data-t="2">1×</button><button data-t="8" aria-pressed="true">4×</button><button data-t="30">15×</button><button data-t="120">60×</button>
       </div>
+      <div class="saved-note" id="savedNote" hidden><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 6L9 17l-5-5"/></svg>Progress saved in this browser</div>
     </div>
   </aside>
 
@@ -302,14 +325,15 @@ tbody tr.click { cursor: pointer; } tbody tr.click:hover { background: var(--sur
     <section class="view" id="view-overview">
       <div class="page-head">
         <div><h1>Overview</h1><p>Live state of all three fulfillment centers.</p></div>
-        <div class="actions"><button class="btn primary" data-new-order><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>New order</button></div>
+        <div class="actions"><button class="btn" data-share title="Copy a link to this scenario"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><path d="M8.6 13.5l6.8 4M15.4 6.5l-6.8 4"/></svg>Share</button><button class="btn primary" data-new-order><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg>New order</button></div>
       </div>
       <div class="banner" id="welcome" hidden>
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 16v-4M12 8h.01"/></svg>
         <div><span class="bt">Getting started</span>
           <ol><li>Press <b>Play</b> in the sidebar to run the shift. Orders arrive and robots start picking.</li>
             <li>Try <b>Simulate outage</b> on a warehouse and watch the agents reroute its orders.</li>
-            <li>Place your own order with <b>New order</b>, then follow it on the Orders page.</li></ol></div>
+            <li>Place your own order with <b>New order</b>, then follow it on the Orders page.</li>
+            <li>Use <b>Scenario</b> to change demand, robots or which site fails, then <b>Share</b> a link to it.</li></ol></div>
         <button class="btn ghost sm x" id="welcomeX" aria-label="Dismiss">Got it</button>
       </div>
       <div class="kpis" id="kpis"></div>
@@ -434,6 +458,36 @@ tbody tr.click { cursor: pointer; } tbody tr.click:hover { background: var(--sur
   <footer><button class="btn" id="mCancel">Cancel</button><button class="btn primary" id="mSubmit">Place order</button></footer>
 </div>
 
+<!-- scenario modal -->
+<div class="modal" id="scenModal" role="dialog" aria-modal="true" aria-labelledby="sTitle">
+  <header><h3 id="sTitle">Scenario</h3><p>Change how the network is set up. Running a scenario restarts the simulation from day 0.</p></header>
+  <div class="body">
+    <div class="field"><label for="sSeed">Random seed</label>
+      <div style="display:flex;gap:8px"><input class="input num" id="sSeed" type="number" min="0" style="flex:1"><button class="btn" id="sDice" type="button" title="Pick a random seed">Shuffle</button></div>
+      <span class="hint-s">The same seed and settings always play out the same way, so a shared link shows exactly what you saw.</span></div>
+    <div class="field"><label>Warehouse outage</label>
+      <div class="seg" id="sOutage" role="group" aria-label="Which warehouse fails">
+        <button data-v="none">None</button><button data-v="WH-NORTH">North</button><button data-v="WH-CENTRAL">Central</button><button data-v="WH-SOUTH">South</button></div></div>
+    <div class="field two" id="sOutageWhen"><div><label for="sAt">Goes down on day</label><input class="input num" id="sAt" type="number" min="0" max="119"></div>
+      <div><label for="sFor">Stays down for (days)</label><input class="input num" id="sFor" type="number" min="1" max="30"></div></div>
+    <div class="field"><label for="sOrders">Orders per day: <b class="num" id="sOrdersV"></b></label><input id="sOrders" type="range" min="10" max="300" step="10"></div>
+    <div class="field"><label for="sRobots">Robots per warehouse: <b class="num" id="sRobotsV"></b></label><input id="sRobots" type="range" min="1" max="8" step="1"></div>
+    <div class="form-err" id="sErr"></div>
+  </div>
+  <footer><button class="btn" id="sShare" style="margin-right:auto">Copy share link</button><button class="btn" id="sCancel">Cancel</button><button class="btn primary" id="sRun">Run scenario</button></footer>
+</div>
+
+<!-- engine boot screen (static build only) -->
+<div class="boot" id="boot" hidden>
+  <div class="boot-card">
+    <div class="spinner" id="bootSpin"></div>
+    <b>Starting the simulation</b>
+    <p id="bootText">Getting ready…</p>
+    <p class="muted">The real Python simulation runs right here in your browser. The first visit downloads about 10 MB; after that it's cached.</p>
+    <button class="btn primary" id="bootReload" hidden onclick="location.reload()">Reload</button>
+  </div>
+</div>
+
 <div class="toasts" id="toasts"></div>
 <div id="tip" role="tooltip"></div>
 
@@ -480,11 +534,11 @@ function toast(lvl, title, body = "") {
 }
 
 /* ---------- api ---------- */
-// Static hosting (GitHub Pages) bundles engine.js, which runs the whole simulation in this tab.
-// Served by FastAPI, there is no engine and every call goes to the Python server.
+// The static build (GitHub Pages) includes engine-client.js: the real Python simulation runs in a
+// Web Worker via Pyodide and answers the same routes. Served by FastAPI, calls go to the server.
 const ENGINE = window.WarehouseEngine;
 async function api(path, opts = {}) {
-  if (ENGINE) return JSON.parse(JSON.stringify(ENGINE.request(path, opts)));
+  if (ENGINE) return ENGINE.request(path, opts);
   const r = await fetch(path, { headers: { "content-type": "application/json" }, ...opts });
   if (!r.ok) { let msg = `${r.status}`; try { msg = (await r.json()).detail ?? msg; } catch {} throw new Error(typeof msg === "string" ? msg : JSON.stringify(msg)); }
   return r.json();
@@ -504,6 +558,8 @@ addEventListener("hashchange", route);
 
 /* ---------- sim controls ---------- */
 let playing = false, ticksPerFrame = 8, busy = false, lastViewFetch = 0;
+let pendingScenario = scenarioFromUrl();  // set when the page was opened from a share link
+const openedFromLink = !!pendingScenario;
 function setPlaying(p) {
   playing = p;
   $("#play").innerHTML = p ? '<svg viewBox="0 0 24 24" fill="currentColor"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>Pause'
@@ -513,14 +569,15 @@ function setPlaying(p) {
 $("#play").onclick = () => setPlaying(!playing);
 $("#speed").onclick = (e) => { const b = e.target.closest("button"); if (!b) return; ticksPerFrame = +b.dataset.t; $$("#speed button").forEach((x) => x.setAttribute("aria-pressed", x === b)); };
 $("#reset").onclick = async () => {
-  if (!confirm("Restart the simulation from day 0? All orders and history will be cleared.")) return;
-  await api("/simulation/reset", { method: "POST", body: JSON.stringify({ seed: 7, outage: true }) });
-  setPlaying(false); resetChartKeys(); toast("info", "Simulation reset", "Back to day 0 with fresh stock."); tick(true);
+  if (!confirm("Restart this scenario from day 0? All orders and history will be cleared.")) return;
+  await runScenario(null);
+  toast("info", "Simulation restarted", "Same scenario, back to day 0 with fresh stock.");
 };
-// don't keep advancing a shared simulation from a background tab
-document.addEventListener("visibilitychange", () => { if (document.hidden && playing) setPlaying(false); });
+// pause in background tabs (saves battery; on a server it also avoids advancing unattended), and save progress
+document.addEventListener("visibilitychange", () => { if (document.hidden) { if (playing) setPlaying(false); ENGINE?.save(); } });
+addEventListener("pagehide", () => ENGINE?.save());
 document.addEventListener("keydown", (e) => {
-  if (e.key === "Escape") { closeDrawer(); closeModal(); }
+  if (e.key === "Escape") { closeDrawer(); closeModal(); closeScenario(); }
   if (e.key === " " && !e.target.closest("input, select, textarea, button, .modal")) { e.preventDefault(); setPlaying(!playing); }
 });
 
@@ -528,6 +585,12 @@ document.addEventListener("keydown", (e) => {
 async function tick(force = false) {
   if (busy) return; busy = true;
   try {
+    if (pendingScenario) {  // opened from a shared link
+      const sc = pendingScenario; pendingScenario = null;
+      await runScenario(sc, true);
+      history.replaceState(null, "", location.pathname + location.hash);  // a refresh now resumes instead of restarting
+      toast("info", "Shared scenario loaded", describeScenario(sc) + ". Press Play to run it.");
+    }
     if (playing && !force) {
       try { await api("/simulation/step", { method: "POST", body: JSON.stringify({ ticks: ticksPerFrame }) }); }
       catch (e) { if (/reached day/.test(e.message)) { setPlaying(false); toast("info", "End of simulation", e.message); } else throw e; }
@@ -549,7 +612,76 @@ function renderShell() {
   $("#clockDay").textContent = `Day ${s.day} · ${m.warehouses_online.length}/3 sites online`;
   $("#dayBar").style.width = ((s.tick % s.ticks_per_day) / s.ticks_per_day * 100) + "%";
   $("#cnt-orders").textContent = m.open_backorders || "";
+  $("#scenLine").textContent = s.scenario ? describeScenario(s.scenario) : "";
 }
+
+/* ---------- scenarios & share links ---------- */
+// URL params: ?seed=42&outage=south&at=4&for=2&orders=120&robots=3
+const SITE_SHORT = { "WH-NORTH": "north", "WH-CENTRAL": "central", "WH-SOUTH": "south" };
+function scenarioFromUrl() {
+  const p = new URLSearchParams(location.search);
+  if (!["seed", "outage", "at", "for", "orders", "robots"].some((k) => p.has(k))) return null;
+  const sc = {}, num = (k, key) => { if (p.has(k) && p.get(k) !== "" && !isNaN(+p.get(k))) sc[key] = +p.get(k); };
+  num("seed", "seed"); num("at", "outage_start"); num("for", "outage_days"); num("orders", "orders_per_day"); num("robots", "robots");
+  if (p.has("outage")) { const o = p.get("outage").toLowerCase(); sc.outage = ["", "none", "off"].includes(o) ? null : "WH-" + o.toUpperCase().replace(/^WH-/, ""); }
+  return sc;
+}
+function shareUrl(sc) {
+  const p = new URLSearchParams({ seed: sc.seed, outage: sc.outage ? SITE_SHORT[sc.outage] : "none" });
+  if (sc.outage) { p.set("at", sc.outage_start); p.set("for", sc.outage_days); }
+  p.set("orders", Math.round(sc.orders_per_day)); p.set("robots", sc.robots);
+  return `${location.origin}${location.pathname}?${p}`;
+}
+function describeScenario(sc) {
+  const outage = sc.outage === null ? "no outage" : sc.outage ? `${WH_SHORT[sc.outage]} down day ${sc.outage_start ?? "?"}${sc.outage_days > 1 ? `–${sc.outage_start + sc.outage_days - 1}` : ""}` : "";
+  return [sc.seed != null ? `Seed ${sc.seed}` : "", outage, sc.orders_per_day ? `${Math.round(sc.orders_per_day)} orders/day` : "", sc.robots ? `${sc.robots} robots/site` : ""].filter(Boolean).join(" · ");
+}
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; }
+  catch { window.prompt("Copy this link:", text); return false; }
+}
+async function shareCurrent(sc = state?.scenario) {
+  if (!sc) return;
+  if (await copyText(shareUrl(sc))) toast("good", "Link copied", "Anyone who opens it gets this exact scenario in their own browser.");
+}
+async function runScenario(sc, quiet = false) {
+  const res = await api("/simulation/reset", { method: "POST", body: JSON.stringify(sc ? { scenario: sc } : {}) });
+  setPlaying(false); resetChartKeys(); chartKeys = {}; lastViewFetch = 0;
+  if (!quiet) tick(true);
+  return res;
+}
+
+let scenDraft = null;
+function openScenario() {
+  const sc = { ...(state?.scenario ?? { seed: 7, outage: "WH-CENTRAL", outage_start: 4, outage_days: 2, orders_per_day: 60, robots: 3 }) };
+  scenDraft = sc;
+  $("#sSeed").value = sc.seed; $("#sAt").value = sc.outage_start; $("#sFor").value = sc.outage_days;
+  $("#sOrders").value = sc.orders_per_day; $("#sRobots").value = sc.robots; $("#sErr").textContent = "";
+  syncScenarioForm();
+  $("#scenModal").classList.add("open"); $("#scrim").classList.add("open");
+}
+function closeScenario() { $("#scenModal").classList.remove("open"); if (!$("#drawer").classList.contains("open") && !$("#modal").classList.contains("open")) $("#scrim").classList.remove("open"); }
+function readScenarioForm() {
+  return { seed: Math.max(0, parseInt($("#sSeed").value, 10) || 0), outage: scenDraft.outage, outage_start: Math.max(0, parseInt($("#sAt").value, 10) || 0),
+    outage_days: Math.max(1, parseInt($("#sFor").value, 10) || 1), orders_per_day: +$("#sOrders").value, robots: +$("#sRobots").value };
+}
+function syncScenarioForm() {
+  $$("#sOutage button").forEach((b) => b.setAttribute("aria-pressed", b.dataset.v === (scenDraft.outage ?? "none")));
+  $("#sOutageWhen").hidden = !scenDraft.outage;
+  $("#sOrdersV").textContent = $("#sOrders").value; $("#sRobotsV").textContent = $("#sRobots").value;
+}
+$("#scenBtn").onclick = openScenario;
+$("#sCancel").onclick = closeScenario;
+$("#sOutage").onclick = (e) => { const b = e.target.closest("button"); if (!b) return; scenDraft.outage = b.dataset.v === "none" ? null : b.dataset.v; syncScenarioForm(); };
+$("#sOrders").oninput = $("#sRobots").oninput = syncScenarioForm;
+$("#sDice").onclick = () => ($("#sSeed").value = Math.floor(Math.random() * 100000));
+$("#sShare").onclick = () => shareCurrent(readScenarioForm());
+$("#sRun").onclick = async () => {
+  const sc = readScenarioForm();
+  try { await runScenario(sc); closeScenario(); toast("good", "Scenario started", describeScenario(sc) + ". Press Play."); }
+  catch (e) { $("#sErr").textContent = "Couldn't start: " + e.message; }
+};
+$$("[data-share]").forEach((b) => (b.onclick = () => shareCurrent()));
 
 /* ================= OVERVIEW ================= */
 function renderOverview() {
@@ -777,7 +909,7 @@ async function openOrder(id, silent = false) {
 }
 function closeDrawer() { drawerOrder = null; $("#drawer").classList.remove("open"); if (!$("#modal").classList.contains("open")) $("#scrim").classList.remove("open"); }
 $("#dClose").onclick = closeDrawer;
-$("#scrim").onclick = () => { closeDrawer(); closeModal(); };
+$("#scrim").onclick = () => { closeDrawer(); closeModal(); closeScenario(); };
 
 /* ---------- new order modal ---------- */
 let dest = "15,85";
@@ -913,6 +1045,19 @@ function renderActivity() {
 if (store.get("welcomeDismissed") !== "1") $("#welcome").hidden = false;
 $("#welcomeX").onclick = () => { $("#welcome").hidden = true; store.set("welcomeDismissed", "1"); };
 addEventListener("resize", () => { resetChartKeys(); if (state && view === "overview") renderOverview(); });
+if (ENGINE) {
+  $("#boot").hidden = false;
+  $("#savedNote").hidden = false;
+  $("#conn").innerHTML = "<b>The simulation engine stopped.</b> Reload the page to start it again.";
+  ENGINE.onProgress((text, fatal) => {
+    $("#bootText").textContent = fatal ? `Couldn't start the simulation: ${text}` : text;
+    if (fatal) { $("#bootSpin").classList.add("err"); $("#bootReload").hidden = false; }
+  });
+  ENGINE.ready.then((r) => {
+    $("#boot").hidden = true;
+    if (r.restored && !openedFromLink) toast("good", "Welcome back", "Your simulation picked up where you left off.");
+  }, () => {});
+}
 route();
 </script>
 </body>

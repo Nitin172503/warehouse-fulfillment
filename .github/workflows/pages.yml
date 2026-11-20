@@ -22,11 +22,6 @@ jobs:
       - uses: astral-sh/setup-uv@v5
       - name: Python tests
         run: uv sync && uv run pytest -q
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 20
-      - name: Browser engine check
-        run: node tests/engine_check.cjs
       - name: Build static site
         run: sh scripts/build_site.sh _site
       - uses: actions/upload-pages-artifact@v3

@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import itertools
 import zlib
 from collections import defaultdict
 
@@ -43,7 +42,7 @@ class Warehouse:
             by_aisle[self.layout.aisle_of(loc)].append(loc)
         self.cameras = [ShelfCamera(f"{warehouse_id}-CAM-{a}", locs, detector) for a, locs in by_aisle.items()]
         self.reconciler = StockReconciler(self.inventory, bus)
-        self._job_ids = itertools.count(1)
+        self._job_seq = 0  # plain int (not itertools.count) so the simulation can be pickled
 
     # --- stock ----------------------------------------------------------
     def slot(self, sku_id: str, location_id: str, qty: int) -> None:
@@ -66,7 +65,8 @@ class Warehouse:
         return self.fleet.backlog
 
     def dispatch(self, order_id: str, tasks: list[PickTask]) -> PickJob:
-        job = PickJob(f"{self.warehouse_id}-J{next(self._job_ids):05d}", order_id, self.warehouse_id, tasks,
+        self._job_seq += 1
+        job = PickJob(f"{self.warehouse_id}-J{self._job_seq:05d}", order_id, self.warehouse_id, tasks,
                       created_tick=self.bus.tick)
         self.fleet.submit(job)
         self.bus.publish("job.queued", warehouse_id=self.warehouse_id, job_id=job.job_id, order_id=order_id)
